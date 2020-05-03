@@ -1,0 +1,157 @@
+---
+title: "Reproducible Research: Peer Assessment 1"
+output: 
+  html_document:
+    keep_md: true
+---
+
+Note: Uses render() in rmarkdown instead of knitr, as latest RStudio uses RMarkdown v2 by default
+
+## Loading and preprocessing the data
+
+
+Loading required modules.  Developed in RStudio 1.2.5033; R version 3.6.3
+
+```{r eval=TRUE}
+library(rmarkdown)
+library(plyr)
+library(ggplot2)
+library (gridExtra)
+```
+
+First we need to unzip the activity data and read the resulting CSV file
+
+```{r eval=TRUE}
+unzip("./activity.zip")
+```
+```{r eval=TRUE, results='hide'}
+adata <- read.csv("./activity.csv")
+```
+```{r eval=TRUE, echo = FALSE}
+summary(adata)
+```
+As we can see from the summary above, there are 2304 NA or unrecorded values.  
+
+Additionally, the time of day is composed of an unpadded integer at 5 minute increments ranging from 0 to 2355, where 0 represents 12:00AM, 10 represents 12:10AM, 100 represents 1:00AM and 2355 represents 11:55PM:
+
+```{r eval=TRUE, echo=FALSE}
+str(adata)
+```
+
+In order to make the data more easily interpreted, it would be helpful to convert interval into a time value on the 24-hour scale, e.g. 00:15 for 12:15AM or 19:40 for 7:40PM.  
+
+```{r eval=TRUE, results='hide'}
+adata$interval <- format(strptime(sprintf("%04d", adata$interval), format="%H%M"), format="%H:%M")
+```
+```{r eval=TRUE, echo=FALSE}
+str(adata)
+```
+
+## What is mean total number of steps taken per day?
+
+
+To calcutate daily steps, we need to sum by the date field, irrespective of time of day:
+
+```{r eval=TRUE}
+byday <- ddply (adata, c("date"), summarise, N=sum(!is.na(steps)), sum=sum(steps, na.rm=TRUE))
+str(byday)
+```
+
+Over the period of this study, the daily number of steps taken looks like this:
+
+```{r eval=TRUE, echo=FALSE}
+barplot(byday$sum, main="Steps Measured per Day", ylab="Total Steps", names.arg=byday$date, ylim=range(pretty(c(0,byday$sum))), las=2,col="red")
+```
+
+  
+  
+The average number of steps per day is `r format(mean(byday$sum, na.rm=TRUE), nsmall=2) ` and the median number of steps per day is `r format(median(byday$sum, na.rm=TRUE), nsmall=2)`, ignoring NA values.
+
+
+## What is the average daily activity pattern?
+
+Assuming that most humans follow fairly normal diurnal patterns, i.e. walking most in the morning, on the way to work, at lunchtime, after work, etc. it would be most useful to look at the mean number of steps at different hours of the day.  First, we will build a data frame of the mean, standard deviation and standard error at each interval:
+
+```{r eval=TRUE}
+byinterval <- ddply (adata, c("interval"), summarise, N=sum(!is.na(steps)), mean=mean(steps, na.rm=TRUE), median=median(steps, na.rm=TRUE), sd=sd(steps, na.rm=TRUE), se=sd/sqrt(N))
+str(byinterval)
+```
+
+We can then plot the mean values for each time interval with error bars using ggplot:
+
+``` {r eval=TRUE}
+ggplot() + 
+geom_errorbar(data=byinterval, mapping=aes(x=interval, ymin=mean-se, ymax=mean+se), width=0.5, size=1, color="blue") + 
+geom_point(data=byinterval, mapping=aes(x=interval, y=mean), size=2, shape=1, fill="white") + theme(axis.text.x = element_text(angle=45)) +
+scale_x_discrete(breaks=c("00:00","01:00", "02:00", "03:00", "04:00", "05:00", "06:00", "07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00")) + 
+labs(title="Average steps taken over one month", x="Time of Day", y="Avg. Steps")
+    
+```
+
+Now we can see that the 8:00 hour is the most active time of day with smaller peaks at noon, 4:00PM and near 7:00PM.  The single 5-minute increment with the highest average number of steps is `r byinterval$interval[byinterval$mean==max(byinterval$mean, na.rm=TRUE)]`.
+
+## Imputing missing values
+
+The dataset contains `r nrow(adata[is.na(adata$steps),])` missing steps entries out of `r nrow(adata)`, which make the data less robust than we would like.
+
+We will impute the missing values using the mean value of steps taken during the same 5-minute across the rest of the days, since time of day is probably more strongly correlated to activity level than day of week.  To do this, we first have to calculate the mean and median value at each time interval over the course of the study, excluding the NA values as follows:
+
+```{r eval=TRUE}
+summary(byinterval)
+```
+
+Now we can replace the missing values in the dataset using the median values in byinterval:
+
+```{r eval=TRUE}
+adata_imputed <- adata
+adata_imputed$steps <- ifelse(is.na(adata_imputed$steps), byinterval$mean[byinterval$interval %in% adata_imputed$interval], adata_imputed$steps)
+```
+
+which yields: 
+
+```{r eval=TRUE, echo=FALSE}
+summary(adata_imputed)
+```
+
+which you can see has `r nrow(adata_imputed[is.na(adata_imputed$steps),])` NA values.  The histogram for daily steps using the imputed data is as follows:
+
+To calcutate daily steps, we need to sum by the date field, irrespective of time of day:
+
+```{r eval=TRUE, echo=FALSE}
+byday_imputed <- ddply (adata_imputed, c("date"), summarise, N=sum(!is.na(steps)), sum=sum(steps, na.rm=TRUE))
+barplot(byday_imputed$sum, main="Steps Measured per Day", ylab="Total Steps", names.arg=byday_imputed$date, ylim=range(pretty(c(0,byday_imputed$sum))), las=2,col="green")
+```
+
+The average number of steps per day is `r format(mean(byday_imputed$sum, na.rm=TRUE), nsmall=2) ` and the median number of steps per day is `r format(median(byday_imputed$sum, na.rm=TRUE), nsmall=2)`, using time-of-day-relevant means instead of NA values.  The use of imputed values for missing data increases the mean steps per day by `r format(mean(byday_imputed$sum, na.rm=TRUE)-mean(byday$sum, na.rm=TRUE), nsmall=2) ` and the median steps by `r format(median(byday_imputed$sum, na.rm=TRUE)-median(byday$sum, na.rm=TRUE), nsmall=2) `.  Visually, it means that days that had no steps reported (e.g. 10/1, 10/8) now have a rosier estimate of activity.  Note that in all cases where NA values were present, the entire day (all 288 5-minute intervals) had NAs, so it is unclear whether this is a valid assumption for the dataset as a whole.
+
+
+## Are there differences in activity patterns between weekdays and weekends?
+
+To discern between weekend and weekday activity, we have to first add a column to the dataset for the day of the week corresponding to that date:
+
+```{r eval=TRUE}
+adata_dayofweek <- adata_imputed
+adata_dayofweek <- mutate (adata_dayofweek, dayofweek = weekdays(as.Date(adata_dayofweek$date)))
+head(adata_dayofweek)
+```
+
+Now we can compare weekend versus weekday activity levels
+
+``` {r eval=TRUE}
+adata_weekend <- adata_dayofweek[adata_dayofweek$dayofweek %in% c("Saturday", "Sunday"),]
+byinterval_weekend <- ddply (adata_weekend, c("interval"), summarise, N=sum(!is.na(steps)), mean=mean(steps, na.rm=TRUE), median=median(steps, na.rm=TRUE), sd=sd(steps, na.rm=TRUE), se=sd/sqrt(N))
+plot1 <- ggplot(data=byinterval_weekend, aes(x=interval, y=mean, group=1)) + geom_line() + theme(axis.text.x = element_text(angle=45)) +
+scale_x_discrete(breaks=c("00:00","01:00", "02:00", "03:00", "04:00", "05:00", "06:00", "07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00")) + 
+labs(title="Average Steps Taken on Weekends", x="Time of Day", y="Avg. Steps") + ylim(0,250)
+    
+adata_weekday <- adata_dayofweek[adata_dayofweek$dayofweek %in% c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"),]
+byinterval_weekday <- ddply (adata_weekday, c("interval"), summarise, N=sum(!is.na(steps)), mean=mean(steps, na.rm=TRUE), median=median(steps, na.rm=TRUE), sd=sd(steps, na.rm=TRUE), se=sd/sqrt(N))
+plot2 <- ggplot(data=byinterval_weekday, aes(x=interval, y=mean, group=1)) + geom_line() + theme(axis.text.x = element_text(angle=45)) +
+scale_x_discrete(breaks=c("00:00","01:00", "02:00", "03:00", "04:00", "05:00", "06:00", "07:00", "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00")) + 
+labs(title="Average Steps Taken on Weekdays", x="Time of Day", y="Avg. Steps") + ylim(0,250)
+   
+grid.arrange(plot1, plot2, ncol=1, nrow=2, heights=c(6,6), widths=c(1)) 
+```
+
+As you can see, weekdays show an earlier start to activity (5:30AM vs. 8:00AM), a larger peak during the morning rush hour, but lower general activity during the day, and an earlier average cessation of activity (8:00PM vs 9:00PM).  
+
